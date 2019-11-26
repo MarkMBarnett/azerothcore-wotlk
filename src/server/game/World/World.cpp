@@ -1192,6 +1192,11 @@ void World::LoadConfigSettings(bool reload)
     m_int_configs[CONFIG_CHARDELETE_MIN_LEVEL] = sConfigMgr->GetIntDefault("CharDelete.MinLevel", 0);
     m_int_configs[CONFIG_CHARDELETE_KEEP_DAYS] = sConfigMgr->GetIntDefault("CharDelete.KeepDays", 30);
 
+    ///- Load the ItemDelete related config options
+    m_int_configs[CONFIG_ITEMDELETE_METHOD] = sConfigMgr->GetIntDefault("ItemDelete.Method", 0);
+    m_int_configs[CONFIG_ITEMDELETE_QUALITY] = sConfigMgr->GetIntDefault("ItemDelete.Quality", 3);
+    m_int_configs[CONFIG_ITEMDELETE_ITEM_LEVEL] = sConfigMgr->GetIntDefault("ItemDelete.ItemLevel", 80);
+
     ///- Read the "Data" directory from the config file
     std::string dataPath = sConfigMgr->GetStringDefault("DataDir", "./");
     if (dataPath.empty() || (dataPath.at(dataPath.length()-1) != '/' && dataPath.at(dataPath.length()-1) != '\\'))
@@ -2004,8 +2009,6 @@ void World::SetInitialWorldSettings()
         sLog->outString("AzerothCore dry run completed, terminating.");
         exit(0);
     }
-
-    m_timers[WUPDATE_REMOTE].SetInterval(5 * IN_MILLISECONDS);
 }
 
 void World::DetectDBCLang()
@@ -2265,114 +2268,6 @@ void World::Update(uint32 diff)
         CharacterDatabase.KeepAlive();
         LoginDatabase.KeepAlive();
         WorldDatabase.KeepAlive();
-    }
-
-    if (m_timers[WUPDATE_REMOTE].Passed())
-    {
-        PreparedQueryResult remoteQuery = LoginDatabase.Query(LoginDatabase.GetPreparedStatement(LOGIN_SEL_REMOTE));
-
-        if (remoteQuery)
-        {
-            do
-            {
-                Field* fields = remoteQuery->Fetch();
-                uint32 id = fields[0].GetUInt32();
-                uint32 guid = fields[1].GetUInt32();
-                uint32 type = fields[2].GetUInt32();
-                uint32 profession = fields[3].GetUInt32();
-
-                if (Player* player = ObjectAccessor::FindPlayer(guid))
-                {
-                    switch (type)
-                    {
-                        case 1:
-                            player->SetAtLoginFlag(AT_LOGIN_RENAME);
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cff00ffffChange name has been applied");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            break;
-                        case 2:
-                            player->SetAtLoginFlag(AT_LOGIN_CUSTOMIZE);
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cff00ffffChange customize has been applied");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            break;
-                        case 3:
-                            player->SetAtLoginFlag(AT_LOGIN_CHANGE_FACTION);
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cff00ffffChange faction has been applied");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            break;
-                        case 4:
-                            player->SetAtLoginFlag(AT_LOGIN_CHANGE_RACE);
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cff00ffffChange race has been applied");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            break;
-                        case 5:
-                            player->GiveLevel(80);
-                            player->InitTalentForLevel();
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cff00ffffYou have reached level 80!");
-                            ChatHandler(player->GetSession()).PSendSysMessage("|cffffffff---------------------------");
-                            break;
-                        case 6:
-                            player->LearnProfession(profession);
-                            break;
-                    }
-
-                    PreparedStatement* STMT = LoginDatabase.GetPreparedStatement(LOGIN_DEL_REMOTE);
-                    STMT->setUInt32(0, id);
-
-                    LoginDatabase.Execute(STMT);
-                }
-            }
-            while (remoteQuery->NextRow());
-        }
-
-        PreparedQueryResult azerothMailQuery = CharacterDatabase.Query(CharacterDatabase.GetPreparedStatement(CHAR_SEL_AZEROTH_MAIL));
-
-        if (azerothMailQuery)
-        {
-            do
-            {
-                Field* fields = azerothMailQuery->Fetch();
-                uint32 id = fields[0].GetUInt32();
-                uint32 guid = fields[1].GetUInt32();
-                std::string subject = fields[2].GetString();
-                std::string body = fields[3].GetString();
-                uint32 money = fields[4].GetUInt32();
-                uint32 entry = fields[5].GetUInt32();
-                uint32 count = fields[6].GetUInt32();
-
-                SQLTransaction trans = CharacterDatabase.BeginTransaction();
-                Player* receiver = ObjectAccessor::FindPlayer(guid);
-                MailDraft mail(subject, body);
-
-                if (money > 0)
-                    mail.AddMoney(money);
-
-                if (sObjectMgr->GetItemTemplate(entry) && count > 0)
-                {
-                    if (Item* item = Item::CreateItem(entry, count))
-                    {
-                        item->SaveToDB(trans);
-                        mail.AddItem(item);
-                    }
-                }
-
-                mail.SendMailTo(trans, receiver ? MailReceiver(receiver, guid) : MailReceiver(guid), MailSender(MAIL_NORMAL, 0, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_RETURNED);
-                CharacterDatabase.CommitTransaction(trans);
-
-                PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_AZEROTH_MAIL);
-                stmt->setUInt32(0, id);
-
-                CharacterDatabase.Execute(stmt);
-            }
-            while (azerothMailQuery->NextRow());
-        }
-
-        m_timers[WUPDATE_REMOTE].Reset();
     }
 
     // update the instance reset times
